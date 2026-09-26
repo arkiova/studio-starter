@@ -59,7 +59,7 @@ curl -fsSL https://raw.githubusercontent.com/arkiova/studio-starter/main/setup.s
 | `maxJobs` | the number of logical cores |
 | `cacheBudgetGB` | `5` |
 | `claudeAccount` | `main` |
-| `repos` | `arkiova/course-ai-system-design` |
+| `repos` | `arkiova/course-ai-system-design`, `arkiova/videos` |
 
 They are saved in `<workDir>/studio.worker.json`. On a re-run, the proposals come from that file.
 

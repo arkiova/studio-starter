@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  powershell:
+    name: setup.ps1
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: PSScriptAnalyzer (fails on any error)
+        shell: pwsh
+        run: |
+          if (-not (Get-Module -ListAvailable PSScriptAnalyzer)) {
+            Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+          }
+          # Suppressions live in setup.ps1 itself, each with its justification.
+          $results = @(Invoke-ScriptAnalyzer -Path ./setup.ps1 -Severity Error, Warning, Information)
+          $results | Format-Table Severity, Line, RuleName, Message -AutoSize -Wrap | Out-String -Width 200
+          $errors = @($results | Where-Object Severity -eq 'Error')
+          if ($errors.Count -gt 0) { Write-Error "$($errors.Count) PSScriptAnalyzer error(s)"; exit 1 }
+
+      - name: Parses under Windows PowerShell 5.1
+        shell: powershell
+        run: |
+          $errs = $null
+          $null = [System.Management.Automation.Language.Parser]::ParseFile("$PWD\setup.ps1", [ref]$null, [ref]$errs)
+          if ($errs) { $errs | ForEach-Object { "$($_.Extent.StartLineNumber): $($_.Message)" }; exit 1 }
+
+      - name: ASCII only (Windows PowerShell 5.1 reads a file without a BOM as ANSI)
+        shell: pwsh
+        run: |
+          if ((Get-Content -Raw ./setup.ps1) -match '[^\x00-\x7F]') { Write-Error 'setup.ps1 has non-ASCII characters'; exit 1 }
+
+      - name: Dry run (Windows PowerShell 5.1)
+        shell: powershell
+        run: .\setup.ps1 -DryRun -Yes -NoAutostart -WorkDir "$env:RUNNER_TEMP\worker"
+
+      - name: Dry run (PowerShell 7)
+        shell: pwsh
+        run: ./setup.ps1 -DryRun -Yes -NoAutostart -WorkDir "$env:RUNNER_TEMP\worker"
+
+  shell:
+    name: setup.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: shellcheck
+        run: |
+          shellcheck --version
+          shellcheck setup.sh
+
+      - name: Parses (bash -n)
+        run: bash -n setup.sh
+
+      - name: Dry run
+        run: bash setup.sh --dry-run --yes --no-autostart --work-dir "$RUNNER_TEMP/worker"

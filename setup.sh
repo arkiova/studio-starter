@@ -31,7 +31,7 @@ readonly SERVICE_NAME="arkiova-studio-worker"
 readonly LAUNCHD_LABEL="com.arkiova.studio-worker"
 readonly STUDIO_REPO="arkiova/studio"
 readonly ENGINE_REPO="arkiova/motion-agent"
-readonly DEFAULT_REPOS="arkiova/course-ai-system-design,arkiova/videos"
+readonly DEFAULT_REPOS="-" # every repo tagged arkiova-studio, which the workers discover (new courses included)
 readonly AWS_PROFILE_NAME="arkiova-studio"
 readonly AWS_IAM_USER="arkiova-studio-worker"
 readonly SSM_PARAMETER="/arkiova-studio/config"
@@ -429,9 +429,10 @@ check_account() {
 check_repos() {
   local items
   case $1 in *[!-[:alnum:]._/,\ ]*) echo "use owner/repo, separated by commas"; return 0 ;; esac
-  items=$(split_lines "$1")
-  if [ -z "$items" ]; then echo "list at least one owner/repo"; return 0; fi
-  if printf '%s\n' "$items" | grep -Evq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then echo "use owner/repo, separated by commas"; fi
+  # "-" or nothing: every repo tagged arkiova-studio
+  items=$(split_lines "$1" | sed '/^-$/d')
+  if [ -z "$items" ]; then return 0; fi
+  if printf '%s\n' "$items" | grep -Evq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then echo "use owner/repo, separated by commas, or - for every repo tagged arkiova-studio"; fi
 }
 
 is_engine_checkout() { [ -f "$1/package.json" ] && [ -f "$1/tts/requirements.txt" ]; }
@@ -475,7 +476,7 @@ read_settings() {
 
   v=$(cfg_get "$old" repos)
   read_setting repos "${v:-$DEFAULT_REPOS}" repos
-  CFG_REPOS=$(split_lines "$SETTING" | paste -sd, -)
+  CFG_REPOS=$(split_lines "$SETTING" | sed '/^-$/d' | paste -sd, -)
 
   v=$(cfg_get "$old" pollSeconds)
   CFG_POLL=${v:-45}
@@ -1134,10 +1135,11 @@ write_config() {
   if [ -n "$entry" ] && studio_setup_has_flags "$entry"; then
     # --yes: take the flags instead of asking again. studio setup also writes a pointer in
     # the home folder, so `studio` finds this config from any folder.
+    # --repos= (empty): the worker serves every repo tagged arkiova-studio, and an old list is cleared.
     running "studio setup (writes the config)"
     (cd "$CFG_WORK_DIR" && node "$entry" setup --yes --name "$CFG_NAME" --capabilities "$CFG_CAPS" --tts-device "$CFG_DEVICE" \
       --max-jobs "$CFG_JOBS" --work-dir "$CFG_WORK_DIR" --engine-path "$CFG_ENGINE" --aws-profile "$AWS_PROFILE_NAME" \
-      --claude-account "$CFG_ACCOUNT" --repos "$CFG_REPOS" --cache-budget-gb "$CFG_CACHE" --poll-seconds "$CFG_POLL" </dev/null) ||
+      --claude-account "$CFG_ACCOUNT" "--repos=$CFG_REPOS" --cache-budget-gb "$CFG_CACHE" --poll-seconds "$CFG_POLL" </dev/null) ||
       fail "studio setup failed." "Read its error above, fix it, then re-run setup."
   else
     STARTER_DRY=0 node -e "$NODE_WRITE_CONFIG" "$path" "$text" >/dev/null ||

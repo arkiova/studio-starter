@@ -75,7 +75,7 @@ $ArkiovaSetupFailed = $false
     $TaskName = 'Arkiova Studio Worker'
     $StudioRepo = 'arkiova/studio'
     $EngineRepo = 'arkiova/motion-agent'
-    $DefaultRepos = @('arkiova/course-ai-system-design', 'arkiova/videos')
+    $DefaultRepos = @('-')   # '-': every repo tagged arkiova-studio, which the workers discover (new courses included)
     $AwsProfile = 'arkiova-studio'
     $AwsIamUser = 'arkiova-studio-worker'
     $SsmParameter = '/arkiova-studio/config'
@@ -533,11 +533,12 @@ try {
             if ($v -notmatch '^[A-Za-z0-9._-]{1,64}$') { 'use letters, digits, dots, hyphens or underscores' }
         }
 
-        $reposText = Read-Setting 'repos' (@(Get-ConfigValue $old 'repos' $DefaultRepos) -join ',') {
+        $reposDefault = @(Get-ConfigValue $old 'repos' $DefaultRepos) -join ','
+        if (-not $reposDefault) { $reposDefault = '-' }
+        $reposText = Read-Setting 'repos' $reposDefault {
             param($v)
-            $items = @(Split-List $v)
-            if ($items.Count -eq 0) { 'list at least one owner/repo' }
-            elseif (@($items | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' }).Count -gt 0) { 'use owner/repo, separated by commas' }
+            $items = @(Split-List $v | Where-Object { $_ -ne '-' })
+            if (@($items | Where-Object { $_ -notmatch '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$' }).Count -gt 0) { 'use owner/repo, separated by commas, or - for every repo tagged arkiova-studio' }
         }
 
         # The engine: -EnginePath, else the one the existing config names, else a clone in the work folder.
@@ -568,7 +569,7 @@ try {
             enginePath    = $engine
             awsProfile    = $AwsProfile
             claudeAccount = $account
-            repos         = [string[]](Split-List $reposText)
+            repos         = [string[]]@(Split-List $reposText | Where-Object { $_ -ne '-' })
             cacheBudgetGB = [int]$cache
             pollSeconds   = [int](Get-ConfigValue $old 'pollSeconds' 45)
         }
@@ -1099,7 +1100,10 @@ print("word aligner: torchaudio MMS_FA", flush=True)
             $flags = @($entry, 'setup', '--yes',
                 '--name', $config.name, '--capabilities', ($config.capabilities -join ','), '--tts-device', $config.ttsDevice,
                 '--max-jobs', "$($config.maxJobs)", '--work-dir', $config.workDir, '--engine-path', $config.enginePath,
-                '--aws-profile', $config.awsProfile, '--claude-account', $config.claudeAccount, '--repos', ($config.repos -join ','),
+                '--aws-profile', $config.awsProfile, '--claude-account', $config.claudeAccount,
+                # --repos= (empty): every repo tagged arkiova-studio, and an old list is cleared. One
+                # argument, because Windows PowerShell drops an empty one.
+                ('--repos=' + ($config.repos -join ',')),
                 '--cache-budget-gb', "$($config.cacheBudgetGB)", '--poll-seconds', "$($config.pollSeconds)")
             Write-Run 'studio setup (writes the config)'
             if ((Invoke-Tool -FilePath (Find-Node) -ArgumentList $flags -WorkingDirectory $config.workDir) -ne 0) {

@@ -1,6 +1,6 @@
-# Arkiova Studio starter
+# Ibyto Studio starter
 
-One command that turns a computer into an Arkiova Studio worker. The worker picks up
+One command that turns a computer into an Ibyto Studio worker. The worker picks up
 tasks from the studio boards (writing, visuals, voice, render) and runs them with the
 engine, on this computer's CPU, GPU and Claude login.
 
@@ -127,9 +127,9 @@ the terminal, and prints the page link too when your AWS profile may read the li
 Windows:
 
 ```powershell
-Stop-ScheduledTask -TaskName 'Arkiova Studio Worker'      # stop now; it starts again at the next log-on
-Disable-ScheduledTask -TaskName 'Arkiova Studio Worker'   # keep it off (Enable-ScheduledTask to undo)
-Start-ScheduledTask -TaskName 'Arkiova Studio Worker'     # start now
+Stop-ScheduledTask -TaskName 'Ibyto Studio Worker'      # stop now; it starts again at the next log-on
+Disable-ScheduledTask -TaskName 'Ibyto Studio Worker'   # keep it off (Enable-ScheduledTask to undo)
+Start-ScheduledTask -TaskName 'Ibyto Studio Worker'     # start now
 ```
 
 Stopping the task ends the worker and everything it started at once. Tasks it was running
@@ -172,9 +172,11 @@ given with `-EnginePath` is never touched.
 
 ## Autostart
 
-- **Windows:** the scheduled task "Arkiova Studio Worker" runs at your log-on, hidden, and
+- **Windows:** the scheduled task "Ibyto Studio Worker" runs at your log-on, hidden, and
   restarts on failure 3 times, 1 minute apart, with no time limit. It runs
   `<workDir>\run-worker.ps1`, which starts `studio worker` from the studio clone.
+  Before the product was renamed Ibyto Studio, this task was "Arkiova Studio Worker";
+  setup removes that old task, so a computer never runs two workers.
 - **Linux:** the systemd user unit `arkiova-studio-worker` starts at log-in and restarts on
   failure 3 times, 1 minute apart. It runs `<workDir>/run-worker.sh`.
 - **macOS:** the launchd agent `com.arkiova.studio-worker` starts at log-in and restarts after

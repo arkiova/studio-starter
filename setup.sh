@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Arkiova Studio worker setup for Linux (Debian/Ubuntu) and macOS.
+# Ibyto Studio worker setup for Linux (Debian/Ubuntu) and macOS.
 #
-# Turns this computer into an Arkiova Studio worker in the same seven steps as setup.ps1:
+# Turns this computer into an Ibyto Studio worker in the same seven steps as setup.ps1:
 #   1. read the hardware (cores, memory, free disk, NVIDIA GPU and VRAM)
 #   2. propose the worker settings and let you confirm or change each one
 #   3. install only the missing tools (apt on Debian/Ubuntu, brew on macOS)
@@ -80,7 +80,7 @@ fail() {
 
 usage() {
   cat <<'EOF'
-Arkiova Studio worker setup (Linux and macOS)
+Ibyto Studio worker setup (Linux and macOS)
 
   --dry-run            show what would happen; install, clone, write and register nothing
   --yes, -y            accept every proposal without asking (the logins still need you)
@@ -1174,7 +1174,7 @@ studio_checks() {
 runner_text() {
   cat <<'EOF'
 #!/bin/sh
-# Arkiova Studio worker runner.
+# Ibyto Studio worker runner.
 # Written by setup.sh (arkiova/studio-starter), which rewrites it, so don't edit it.
 # Started by the systemd --user unit arkiova-studio-worker (Linux) or the launchd agent
 # com.arkiova.studio-worker (macOS). It runs `studio worker` from the studio clone next to
@@ -1195,7 +1195,7 @@ unit_text() {
   local dir=$1
   cat <<EOF
 [Unit]
-Description=Arkiova Studio worker (set up by arkiova/studio-starter)
+Description=Ibyto Studio worker (set up by arkiova/studio-starter)
 After=network-online.target
 StartLimitIntervalSec=600
 StartLimitBurst=4
@@ -1414,7 +1414,7 @@ main() {
     *) fail "setup.sh is for Linux and macOS." "On Windows run in PowerShell: irm $RAW_BASE/setup.ps1 | iex" ;;
   esac
   refresh_path
-  printf '\nArkiova Studio worker setup\n'
+  printf '\nIbyto Studio worker setup\n'
   if [ "$DRY_RUN" = 1 ]; then printf '%sDRY RUN: nothing will be installed, cloned, written or registered.%s\n' "$C_DRY" "$C_OFF"; fi
   if [ "$UNINSTALL" = 1 ]; then uninstall; else setup; fi
 }

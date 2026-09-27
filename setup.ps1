@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    Turns this computer into an Arkiova Studio worker.
+    Turns this computer into an Ibyto Studio worker.
 
 .DESCRIPTION
-    Sets up (or updates) an Arkiova Studio worker on Windows, in seven steps:
+    Sets up (or updates) an Ibyto Studio worker on Windows, in seven steps:
       1. reads the hardware: cores, memory, free disk per drive, NVIDIA GPU and VRAM;
       2. proposes the worker settings and lets you confirm or change each one;
       3. installs only the missing tools: Git, Node.js 24, Python 3.11, ffmpeg,
@@ -13,7 +13,7 @@
          their npm packages, Playwright Chromium, the engine's TTS Python environment and the
          voice models;
       6. writes <workDir>\studio.worker.json, then runs `studio doctor` and `studio worker --once --dry`;
-      7. registers the "Arkiova Studio Worker" scheduled task (at log-on, hidden, restarts on failure).
+      7. registers the "Ibyto Studio Worker" scheduled task (at log-on, hidden, restarts on failure).
     Running it again updates the clones and dependencies and changes nothing else.
     It never prints, logs or copies a key or token.
 
@@ -72,7 +72,8 @@ $ArkiovaSetupFailed = $false
     $ErrorActionPreference = 'Stop'
     Set-StrictMode -Version 1
 
-    $TaskName = 'Arkiova Studio Worker'
+    $TaskName = 'Ibyto Studio Worker'
+    $LegacyTaskName = 'Arkiova Studio Worker'   # the task's name before the product was renamed; setup replaces it
     $StudioRepo = 'arkiova/studio'
     $EngineRepo = 'arkiova/motion-agent'
     $DefaultRepos = @('-')   # '-': every repo tagged arkiova-studio, which the workers discover (new courses included)
@@ -90,9 +91,9 @@ $ArkiovaSetupFailed = $false
 
     # The script the scheduled task runs. Written to <workDir>\run-worker.ps1.
     $RunnerScript = @'
-# Arkiova Studio worker runner.
+# Ibyto Studio worker runner.
 # Written by setup.ps1 (arkiova/studio-starter) and started at log-on by the
-# "Arkiova Studio Worker" scheduled task. Setup rewrites it, so don't edit it.
+# "Ibyto Studio Worker" scheduled task. Setup rewrites it, so don't edit it.
 # It runs `studio worker` from the studio clone next to it, with this folder as
 # the working directory, and logs to .\logs (the newest 30 runs are kept). The
 # worker's whole process tree is tied to this process through a job object, so
@@ -399,8 +400,15 @@ try {
         return $Default
     }
 
-    function Get-TaskWorkDir {
+    # The worker's scheduled task, under its name or the name it had before the rename.
+    function Get-WorkerTask {
         $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        if (-not $task) { $task = Get-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue }
+        return $task
+    }
+
+    function Get-TaskWorkDir {
+        $task = Get-WorkerTask
         if ($task -and @($task.Actions).Count -gt 0 -and $task.Actions[0].WorkingDirectory) { return $task.Actions[0].WorkingDirectory }
         return $null
     }
@@ -838,12 +846,12 @@ try {
     # The worker holds files open in node_modules and the TTS env, so it stops before they change.
     function Suspend-RunningWorker([string]$Dir) {
         if ($State.WorkerStopped) { return }
-        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+        $task = Get-WorkerTask
         if (-not $task -or [string]$task.State -ne 'Running') { return }
         $State.WorkerStopped = $true
         if ($DryRun) { Write-Dry 'would stop the running worker first and start it again at the end'; return }
         Write-Run 'stopping the running worker while its files change (it starts again at the end)'
-        Stop-ScheduledTask -TaskName $TaskName
+        Stop-ScheduledTask -TaskName $task.TaskName
         Close-WorkerProcess $Dir
     }
 
@@ -1156,6 +1164,15 @@ print("word aligner: torchaudio MMS_FA", flush=True)
             $task.Actions[0].Arguments -eq $cmd.Arguments -and $task.Actions[0].WorkingDirectory -eq $dir
         $user = [Security.Principal.WindowsIdentity]::GetCurrent().Name
 
+        # a task under the old name (from before the rename) goes, so one computer never runs two workers
+        $legacy = Get-ScheduledTask -TaskName $LegacyTaskName -ErrorAction SilentlyContinue
+        if ($legacy -and $DryRun) { Write-Dry "would remove the old scheduled task '$LegacyTaskName' (the worker's task is now '$TaskName')" }
+        elseif ($legacy) {
+            if ([string]$legacy.State -eq 'Running') { Stop-ScheduledTask -TaskName $LegacyTaskName; Close-WorkerProcess $dir; $State.WorkerStopped = $true }
+            Unregister-ScheduledTask -TaskName $LegacyTaskName -Confirm:$false
+            Write-Ok "removed the old scheduled task '$LegacyTaskName' (the worker's task is now '$TaskName')"
+        }
+
         if ($runnerCurrent -and $taskCurrent) { Write-Ok "scheduled task '$TaskName' is already set up"; return }
         if ($DryRun) {
             Write-Dry "would write $runner"
@@ -1181,7 +1198,7 @@ print("word aligner: torchaudio MMS_FA", flush=True)
                 Trigger     = (New-ScheduledTaskTrigger -AtLogOn -User $user)
                 Settings    = (New-ScheduledTaskSettingsSet @timing)
                 Principal   = (New-ScheduledTaskPrincipal -UserId $user -LogonType Interactive -RunLevel Limited)
-                Description = 'Runs the Arkiova Studio worker (studio worker) at log-on. Set up by arkiova/studio-starter.'
+                Description = 'Runs the Ibyto Studio worker (studio worker) at log-on. Set up by arkiova/studio-starter.'
                 Force       = $true
             }
             try { $null = Register-ScheduledTask @register }
@@ -1220,14 +1237,16 @@ print("word aligner: torchaudio MMS_FA", flush=True)
         if (-not $dir) { $dir = Find-ExistingWorkDir $hw }
         if ($dir) { $dir = [IO.Path]::GetFullPath($dir).TrimEnd('\') }
 
-        $task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
-        if (-not $task) { Write-Ok "no scheduled task '$TaskName'" }
-        elseif ($DryRun) { Write-Dry "would stop and remove the scheduled task '$TaskName'" }
-        else {
-            if ([string]$task.State -eq 'Running') { Stop-ScheduledTask -TaskName $TaskName }
-            if ($dir) { Close-WorkerProcess $dir }
-            Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false
-            Write-Ok "removed the scheduled task '$TaskName'"
+        foreach ($name in @($TaskName, $LegacyTaskName)) {
+            $task = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
+            if (-not $task) { if ($name -eq $TaskName) { Write-Ok "no scheduled task '$name'" } }
+            elseif ($DryRun) { Write-Dry "would stop and remove the scheduled task '$name'" }
+            else {
+                if ([string]$task.State -eq 'Running') { Stop-ScheduledTask -TaskName $name }
+                if ($dir) { Close-WorkerProcess $dir }
+                Unregister-ScheduledTask -TaskName $name -Confirm:$false
+                Write-Ok "removed the scheduled task '$name'"
+            }
         }
 
         if (-not $dir -or -not (Test-Path -LiteralPath $dir)) { Write-Ok 'no work folder found' }
@@ -1299,7 +1318,7 @@ print("word aligner: torchaudio MMS_FA", flush=True)
             Exit-Setup 'setup.ps1 is for Windows.' "On Linux or macOS run: curl -fsSL $RawBase/setup.sh | bash"
         }
         Write-Host ''
-        Write-Host 'Arkiova Studio worker setup' -ForegroundColor White
+        Write-Host 'Ibyto Studio worker setup' -ForegroundColor White
         if ($DryRun) { Write-Host 'DRY RUN: nothing will be installed, cloned, written or registered.' -ForegroundColor Magenta }
         if ($Uninstall) { Invoke-Uninstall } else { Invoke-Setup }
     } catch {

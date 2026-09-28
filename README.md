@@ -26,6 +26,9 @@ exactly what it will install before it installs anything, walks you through the 
 logins, and starts the worker. Every step prints one line, and a failure stops with
 what to do next. Running it again is safe: it picks up where it stopped.
 
+To have Claude Code run all of this for you, paste the prompt in
+[setup-with-claude-code.md](setup-with-claude-code.md) into Claude Code on the new computer.
+
 ### Options
 
 | Windows | Linux / macOS | What it does |

@@ -88,8 +88,11 @@ Then, in the work folder:
 - `studio/`: a clone of `arkiova/studio` (the worker) with its npm packages (`npm ci`).
 - `motion-agent/`: a clone of `arkiova/motion-agent` (the engine) with its npm packages, unless you pass `-EnginePath`.
 - Playwright Chromium, which the engine renders with (`npx playwright install chromium`).
-- The engine's TTS environment in `motion-agent/tts/.venv`: Python 3.11 with PyTorch CUDA wheels
-  when an NVIDIA GPU is present and CPU wheels otherwise, then `tts/requirements.txt`.
+- The TTS environment in the voice folder's `.venv`: Python 3.11 with PyTorch CUDA wheels
+  when an NVIDIA GPU is present and CPU wheels otherwise, then the folder's `requirements.txt`.
+  The voice folder is `tts` beside the engine (or `MOTION_TTS`). It is in no repo, so copy it
+  there from a computer that has it before running setup. Without it, setup warns and leaves
+  `tts` out of the capabilities: the computer still runs Claude and renders, but records no voice.
 - The voice models, downloaded once: the Chatterbox weights, the whisper-tiny.en speech check
   and the MMS_FA word aligner.
 
@@ -196,7 +199,7 @@ Plan for about 20 GB free. Measured sizes on a Windows worker:
 | Tools (Git, Node.js, Python, ffmpeg, gh, AWS CLI, Claude Code) | their install folders | about 1 GB |
 | `studio` and `motion-agent` clones with npm packages | the work folder | about 1 GB |
 | Playwright Chromium | `%LOCALAPPDATA%\ms-playwright`, `~/.cache/ms-playwright`, `~/Library/Caches/ms-playwright` | 0.7 GB |
-| TTS environment | `motion-agent/tts/.venv` | 5.7 GB with CUDA wheels, less with CPU wheels |
+| TTS environment | `tts/.venv`, beside the engine | 5.7 GB with CUDA wheels, less with CPU wheels |
 | Voice models | `~/.cache/huggingface` and `~/.cache/torch` | about 4.5 GB |
 | Worker cache | the work folder | up to `cacheBudgetGB` (5 GB) |
 
@@ -229,7 +232,7 @@ node <workDir>/studio/bin/studio.js gc         # trim the cache and old scratch 
   adds the NodeSource and GitHub CLI apt sources (and the deadsnakes PPA on Ubuntu when
   Python 3.11 needs it); on macOS it links `node@24` into Homebrew's bin folder.
 - Creates the work folder, with the clones, the config, `run-worker.ps1` or `run-worker.sh`, and `logs`.
-- Installs npm packages, and creates `tts/.venv` in the engine, including a checkout passed with `-EnginePath`.
+- Installs npm packages, and creates `.venv` in the voice folder beside the engine (also beside a checkout passed with `-EnginePath`).
 - Downloads Playwright Chromium and the voice models into your user caches.
 - Runs `gh auth setup-git`, so `git` uses your GitHub CLI login for github.com.
 - Creates the AWS profile `arkiova-studio` when you type the key in.

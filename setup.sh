@@ -435,7 +435,15 @@ check_repos() {
   if printf '%s\n' "$items" | grep -Evq '^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$'; then echo "use owner/repo, separated by commas, or - for every repo tagged arkiova-studio"; fi
 }
 
-is_engine_checkout() { [ -f "$1/package.json" ] && [ -f "$1/tts/requirements.txt" ]; }
+is_engine_checkout() { [ -f "$1/package.json" ] && [ -f "$1/pipeline/unit.mjs" ]; }
+
+# The voice folder is in no repo (studio contract section 16): MOTION_TTS, else tts beside the engine.
+tts_home() {
+  case ${MOTION_TTS:-} in
+    /*) printf '%s' "${MOTION_TTS%/}" ;;
+    *) printf '%s/tts' "$(dirname "$1")" ;;
+  esac
+}
 
 read_settings() {
   local old v managed note
@@ -487,7 +495,7 @@ read_settings() {
   if [ -n "$ENGINE_PATH" ]; then
     CFG_ENGINE=${ENGINE_PATH%/}
     if ! is_engine_checkout "$CFG_ENGINE"; then
-      fail "--engine-path $CFG_ENGINE is not a motion-agent checkout (no package.json or tts/requirements.txt)." \
+      fail "--engine-path $CFG_ENGINE is not a motion-agent checkout (no package.json or pipeline/unit.mjs)." \
         "Point --engine-path at a motion-agent clone, or leave it out to clone one into the work folder."
     fi
   else
@@ -504,6 +512,18 @@ read_settings() {
     note="existing checkout: setup installs its dependencies but never pulls it"
   fi
   info "$(printf '%-14s %s (%s)' enginePath "$CFG_ENGINE" "$note")"
+
+  # The voice folder is in no repo (contract section 16): without it this computer records no voice.
+  v=$(tts_home "$CFG_ENGINE")
+  case ",$CFG_CAPS," in
+    *,tts,*)
+      if [ ! -f "$v/requirements.txt" ]; then
+        warn "no voice folder at $v (it is in no repo: copy it there, then re-run setup); this computer will not record voice"
+        CFG_CAPS=$(printf '%s\n' "$CFG_CAPS" | tr ',' '\n' | sed '/^tts$/d' | paste -sd, -)
+        if [ -z "$CFG_CAPS" ]; then fail "No capability is left: tts needs the voice folder." "Copy the voice folder to $v, or choose agent or render."; fi
+      fi
+      ;;
+  esac
 }
 
 # ------------------------------------------------------------------ 3. tools
@@ -958,14 +978,14 @@ requirement_pin() {
 stamp_get() { sed -n "s/^$2=//p" "$1" 2>/dev/null | head -n 1 || true; }
 
 download_voice_models() {
-  local engine=$1 python=$2
-  # Downloads what the engine's first TTS run would, with the engine's own code: the
+  local voice_dir=$1 python=$2
+  # Downloads what the engine's first TTS run would, with the voice folder's own code: the
   # Chatterbox weights (its from_pretrained, stopped before the model loads), the
   # whisper-tiny.en speech check and torchaudio's MMS_FA word aligner.
-  (cd "$engine" && PYTHONUTF8=1 "$python" - "$engine" <<'PY'
+  (cd "$voice_dir" && PYTHONUTF8=1 "$python" - "$voice_dir" <<'PY'
 import os, sys
-engine = sys.argv[1]
-sys.path.insert(0, os.path.join(engine, "tts", "src"))
+voice_dir = sys.argv[1]
+sys.path.insert(0, os.path.join(voice_dir, "src"))
 from chatterbox import mtl_tts
 cls = mtl_tts.ChatterboxMultilingualTTS
 cls.from_local = classmethod(lambda c, ckpt_dir, device: ckpt_dir)
@@ -981,21 +1001,22 @@ PY
 }
 
 install_tts() {
-  local engine=$1 venv req python stamp variant index cuda_index torch torchaudio req_hash
+  local engine=$1 tts_dir venv req python stamp variant index cuda_index torch torchaudio req_hash
   local venv_exists=0 deps_current=0 models_done=0 models_flag wheel_note py311
   case ",$CFG_CAPS," in *,tts,*) ;; *) ok "TTS env skipped: this worker has no tts capability"; return 0 ;; esac
-  venv="$engine/tts/.venv"
-  req="$engine/tts/requirements.txt"
+  tts_dir=$(tts_home "$engine")
+  venv="$tts_dir/.venv"
+  req="$tts_dir/requirements.txt"
   python="$venv/bin/python"
   stamp="$venv/$STAMP_NAME"
   if [ "$PLATFORM" = mac ]; then variant=mps; elif [ "$HAS_GPU" = 1 ]; then variant=cuda; else variant=cpu; fi
   if [ ! -f "$req" ]; then
     if [ "$DRY_RUN" = 1 ]; then
-      dry "would create $venv with Python 3.11 and install tts/requirements.txt (PyTorch $variant wheels)"
+      dry "would create $venv with Python 3.11 and install the voice folder's requirements.txt (PyTorch $variant wheels)"
       dry "would download the voice models once (about 4.5 GB)"
       return 0
     fi
-    fail "The engine has no tts/requirements.txt ($req)." "Update the engine (re-run setup) or ask the owner."
+    fail "There is no voice folder at $tts_dir (no requirements.txt)." "Copy the voice folder there (it is in no repo), or leave tts out of the capabilities."
   fi
   if [ "$PLATFORM" = mac ] && [ "$(uname -m)" != arm64 ]; then
     fail "PyTorch $(requirement_pin "$req" torch) has no wheels for Intel Macs, so this Mac can't run TTS." "Re-run setup and set capabilities to agent,render."
@@ -1017,7 +1038,7 @@ install_tts() {
   if [ "$deps_current" = 1 ]; then
     ok "TTS env is current ($venv, $variant)"
   elif [ "$DRY_RUN" = 1 ]; then
-    if [ "$venv_exists" = 1 ]; then dry "would update $venv: $wheel_note, then tts/requirements.txt"; else dry "would create $venv with Python 3.11: $wheel_note, then tts/requirements.txt"; fi
+    if [ "$venv_exists" = 1 ]; then dry "would update $venv: $wheel_note, then the voice folder's requirements.txt"; else dry "would create $venv with Python 3.11: $wheel_note, then the voice folder's requirements.txt"; fi
   else
     pause_worker
     if [ "$venv_exists" != 1 ]; then
@@ -1037,8 +1058,8 @@ install_tts() {
       "$python" -m pip --disable-pip-version-check --no-input "$@" </dev/null ||
         fail "Could not install PyTorch." "Read the pip error above (often the network), then re-run setup."
     fi
-    running "installing tts/requirements.txt"
-    (cd "$engine" && "$python" -m pip --disable-pip-version-check --no-input install -r "$req" </dev/null) ||
+    running "installing $req"
+    (cd "$tts_dir" && "$python" -m pip --disable-pip-version-check --no-input install -r "$req" </dev/null) ||
       fail "Could not install the TTS requirements." "Read the pip error above, then re-run setup."
     models_flag=false
     if [ "$models_done" = 1 ]; then models_flag=true; fi
@@ -1052,7 +1073,7 @@ install_tts() {
     dry "would download the voice models once: Chatterbox, whisper-tiny.en and the MMS_FA aligner (about 4.5 GB, in your user cache)"
   else
     running "downloading the voice models once (about 4.5 GB; this takes a while)"
-    download_voice_models "$engine" "$python"
+    download_voice_models "$tts_dir" "$python"
     printf 'requirements=%s\ntorch=%s\nmodels=true\n' "$req_hash" "$variant" >"$stamp"
     ok "voice models downloaded"
   fi

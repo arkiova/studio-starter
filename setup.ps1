@@ -392,7 +392,13 @@ try {
 
     function Test-EngineCheckout([string]$Path) {
         return ((Test-Path -LiteralPath (Join-Path $Path 'package.json')) -and
-            (Test-Path -LiteralPath (Join-Path $Path 'tts\requirements.txt')))
+            (Test-Path -LiteralPath (Join-Path $Path 'pipeline\unit.mjs')))
+    }
+
+    function Get-TtsHome([string]$Engine) {
+        # The voice folder is in no repo (studio contract section 16): MOTION_TTS, else tts beside the engine.
+        if ($env:MOTION_TTS -and [IO.Path]::IsPathRooted($env:MOTION_TTS)) { return [IO.Path]::GetFullPath($env:MOTION_TTS).TrimEnd('\') }
+        return (Join-Path (Split-Path -Parent $Engine) 'tts')
     }
 
     function Get-ConfigValue($Config, [string]$Key, $Default) {
@@ -555,7 +561,7 @@ try {
         if ($EnginePath) {
             $engine = [IO.Path]::GetFullPath($EnginePath).TrimEnd('\')
             if (-not (Test-EngineCheckout $engine)) {
-                Exit-Setup "-EnginePath $engine is not a motion-agent checkout (no package.json or tts\requirements.txt)." 'Point -EnginePath at a motion-agent clone, or leave it out to clone one into the work folder.'
+                Exit-Setup "-EnginePath $engine is not a motion-agent checkout (no package.json or pipeline\unit.mjs)." 'Point -EnginePath at a motion-agent clone, or leave it out to clone one into the work folder.'
             }
         } else {
             $oldEngine = [string](Get-ConfigValue $old 'enginePath' '')
@@ -567,6 +573,14 @@ try {
         $engineNote = 'cloned and updated by setup'
         if ($engine -ne $managedEngine) { $engineNote = 'existing checkout: setup installs its dependencies but never pulls it' }
         Write-Info ('{0,-14} {1} ({2})' -f 'enginePath', $engine, $engineNote)
+
+        # The voice folder is in no repo (contract section 16): without it this computer records no voice.
+        $ttsDir = Get-TtsHome $engine
+        if ('tts' -in $caps -and -not (Test-Path -LiteralPath (Join-Path $ttsDir 'requirements.txt'))) {
+            Write-Warn "no voice folder at $ttsDir (it is in no repo: copy it there, then re-run setup); this computer will not record voice"
+            $caps = @($caps | Where-Object { $_ -ne 'tts' })
+            if ($caps.Count -eq 0) { Exit-Setup 'No capability is left: tts needs the voice folder.' "Copy the voice folder to $ttsDir, or choose agent or render." }
+        }
 
         $config = [ordered]@{
             name          = $workerName
@@ -927,14 +941,14 @@ try {
         try { return (Get-Content -Raw -LiteralPath $path | ConvertFrom-Json) } catch { return $null }
     }
 
-    function Install-VoiceModel([string]$Engine, [string]$Python) {
-        # Downloads what the engine's first TTS run would, with the engine's own code: the
+    function Install-VoiceModel([string]$VoiceDir, [string]$Python) {
+        # Downloads what the engine's first TTS run would, with the voice folder's own code: the
         # Chatterbox weights (its from_pretrained, stopped before the model loads), the
         # whisper-tiny.en speech check and torchaudio's MMS_FA word aligner.
         $code = @'
 import os, sys
-engine = sys.argv[1]
-sys.path.insert(0, os.path.join(engine, "tts", "src"))
+voice_dir = sys.argv[1]
+sys.path.insert(0, os.path.join(voice_dir, "src"))
 from chatterbox import mtl_tts
 cls = mtl_tts.ChatterboxMultilingualTTS
 cls.from_local = classmethod(lambda c, ckpt_dir, device: ckpt_dir)
@@ -951,7 +965,7 @@ print("word aligner: torchaudio MMS_FA", flush=True)
         $saved = $env:PYTHONUTF8
         try {
             $env:PYTHONUTF8 = '1'
-            $exit = Invoke-Tool -FilePath $Python -ArgumentList $file, $Engine -WorkingDirectory $Engine
+            $exit = Invoke-Tool -FilePath $Python -ArgumentList $file, $VoiceDir -WorkingDirectory $VoiceDir
         } finally {
             $env:PYTHONUTF8 = $saved
             Remove-Item -LiteralPath $file -Force -ErrorAction SilentlyContinue
@@ -963,11 +977,12 @@ print("word aligner: torchaudio MMS_FA", flush=True)
         if ('tts' -notin $Capabilities) { Write-Ok 'TTS env skipped: this worker has no tts capability'; return }
         $variant = 'cpu'
         if ($HasGpu) { $variant = 'cuda' }
-        $venv = Join-Path $Engine 'tts\.venv'
-        $req = Join-Path $Engine 'tts\requirements.txt'
+        $ttsDir = Get-TtsHome $Engine
+        $venv = Join-Path $ttsDir '.venv'
+        $req = Join-Path $ttsDir 'requirements.txt'
         if (-not (Test-Path -LiteralPath $req)) {
-            if ($DryRun) { Write-Dry "would create $venv with Python 3.11 and install tts\requirements.txt (PyTorch $variant wheels)"; Write-Dry 'would download the voice models once (about 4.5 GB)'; return }
-            Exit-Setup "The engine has no tts\requirements.txt ($req)." 'Update the engine (re-run setup) or ask the owner.'
+            if ($DryRun) { Write-Dry "would create $venv with Python 3.11 and install the voice folder's requirements.txt (PyTorch $variant wheels)"; Write-Dry 'would download the voice models once (about 4.5 GB)'; return }
+            Exit-Setup "There is no voice folder at $ttsDir (no requirements.txt)." 'Copy the voice folder there (it is in no repo), or leave tts out of the capabilities.'
         }
         $lines = @(Get-Content -LiteralPath $req)
         $torch = Get-RequirementPin $lines 'torch'
@@ -989,8 +1004,8 @@ print("word aligner: torchaudio MMS_FA", flush=True)
 
         if ($depsCurrent) { Write-Ok "TTS env is current ($venv, $variant)" }
         elseif ($DryRun) {
-            if ($venvExists) { Write-Dry "would update $venv`: $wheelNote, then tts\requirements.txt" }
-            else { Write-Dry "would create $venv with Python 3.11: $wheelNote, then tts\requirements.txt" }
+            if ($venvExists) { Write-Dry "would update $venv`: $wheelNote, then the voice folder's requirements.txt" }
+            else { Write-Dry "would create $venv with Python 3.11: $wheelNote, then the voice folder's requirements.txt" }
         } else {
             Suspend-RunningWorker $WorkerDir
             if (-not $venvExists) {
@@ -1010,8 +1025,8 @@ print("word aligner: torchaudio MMS_FA", flush=True)
                 Write-Run "installing $wheelNote"
                 if ((Invoke-Tool -FilePath $python -ArgumentList $torchArgs) -ne 0) { Exit-Setup 'Could not install PyTorch.' 'Read the pip error above (often the network), then re-run setup.' }
             }
-            Write-Run 'installing tts\requirements.txt'
-            if ((Invoke-Tool -FilePath $python -ArgumentList ($pip + @('install', '-r', $req)) -WorkingDirectory $Engine) -ne 0) {
+            Write-Run "installing $req"
+            if ((Invoke-Tool -FilePath $python -ArgumentList ($pip + @('install', '-r', $req)) -WorkingDirectory $ttsDir) -ne 0) {
                 Exit-Setup 'Could not install the TTS requirements.' 'Read the pip error above, then re-run setup.'
             }
             Write-TextFile (Join-Path $venv $StampName) (@{ requirements = $reqHash; torch = $variant; models = $modelsDone } | ConvertTo-Json -Compress)
@@ -1022,7 +1037,7 @@ print("word aligner: torchaudio MMS_FA", flush=True)
         elseif ($DryRun) { Write-Dry 'would download the voice models once: Chatterbox, whisper-tiny.en and the MMS_FA aligner (about 4.5 GB, in your user cache)' }
         else {
             Write-Run 'downloading the voice models once (about 4.5 GB; this takes a while)'
-            Install-VoiceModel $Engine $python
+            Install-VoiceModel $ttsDir $python
             Write-TextFile (Join-Path $venv $StampName) (@{ requirements = $reqHash; torch = $variant; models = $true } | ConvertTo-Json -Compress)
             Write-Ok 'voice models downloaded'
         }
